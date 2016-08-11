@@ -11,7 +11,9 @@
 #
 # SECTION: MODULE IMPORTS
 #
+import logging
 import urllib.request
+import datetime
 
 from lxml import html
 from lxml.html.clean import Cleaner
@@ -46,6 +48,8 @@ class Extractor:
         self._state = "已初始化"
         self.keys = []
         self.vals = []
+        # 添加类调试使用 Logger
+        self.log = logging.getLogger("DEBUG")
 
     def fetch(self):
         """ Fetches data from source, returns None. """
@@ -88,6 +92,8 @@ class WebExtractor(Extractor):
                                      page_structure=False,
                                      kill_tags=('a',))
         self.tree = cleaner.clean_html(self.tree)
+        # DEBUG
+        self.log.info("HTML tree purged.")
         # print(html.tostring(self.tree,pretty_print=True,encoding=str))
 
     def _trans2DHtmlTab(self, table):
@@ -113,18 +119,22 @@ class WebExtractor(Extractor):
                 self.vals.append([cells[i], ])
 
         # DEBUG
-        for i in range(0, len(self.keys)):
-            print(self.keys[i], self.vals[i])
+        self.log.info("One table found, %d rows found." % len(rows))
+
+        # for i in range(0, len(self.keys)):
+        #     print(self.keys[i], self.vals[i])
 
     def fetch(self):
         """ Fetches html from web, returns None. """
 
         # 抓取 html 网页
+        self.log.info("Start to fetch HTML page from web.")
         try:
             f = urllib.request.urlopen(self.url)
             self.tree = html.parse(f, self.parser).getroot()
         except:
             raise ("Error found while retrieving page.")
+        self.log.info("HTML page fetched.")
 
         # 使用私有方法 _purge 清洗抓到的数据, 以节约部分内存。
         self._purge()
@@ -148,6 +158,7 @@ class FileExtractor(Extractor):
         # 类属性定义部分
         self.path = path
 
+
 #
 # SECTION: CLASS DEFINATION
 #
@@ -169,6 +180,7 @@ class SinaSSE(WebExtractor):
     def __init__(self, code, url):
         super().__init__(url)
         self.code = code
+        self.log.info("SinaSSE object initialized.")
 
     def fetch(self):
         """ Redinfe 'fetch()' method to add data transfrom. """
@@ -182,16 +194,11 @@ class SinaSSE(WebExtractor):
         tables = self.tree.xpath("//table[@id]")
         # 找到数据后, 由于新浪的网页中有一个无用的表头, 因此要删去
         for table in tables:
-            theads = table.xpath(".//thead")
-            if len(theads) == 1:
-                theads[0].drop_tree()
-            else:  # 没有或超过 1 个 thead 都表示本数据表有问题, 因此跳过。
-                continue
+            table.xpath(".//thead")[0].drop_tree()
             self._trans2DHtmlTab(table)
-        if len(self.keys) > 0:
-            print("数据转换成功")
-        else:
-            print("数据转换失败")
+        self._state = ("转换成功" if len(self.keys) > 0 else "转换失败")
+        # DEBUG
+        self.log.info("Total %d datas found in page." % len(self.keys))
 
 
 #
@@ -218,12 +225,11 @@ class TdxCodeFile(FileExtractor):
         f = open(self.path, "rb")
         # 处理文件头
         head_size = 50  # 此处定义了文件头部的大小
-        conv_date = lambda x: datetime.date(x // 10000,
-                                            x // 100 % 100, x % 100)
+        conv_date = lambda x: datetime.date(x // 10000, x // 100 % 100, x % 100)
         buffer = f.read(head_size)
         date = conv_date(unpack("<40shii", buffer)[2])
         # DEBUG
-        print("Get date from head of data file =", date)
+        self.log.info("Get date from head of data file = %s" % date)
 
         # 处理正文部分的数据记录
         recd_size = 314  # 此处定义了记录的直接长度
@@ -237,10 +243,11 @@ class TdxCodeFile(FileExtractor):
                                   unpack("<23s49s213s29s", buffer)]
                 # print(v1.decode("gbk"),v2.decode("gbk"),v4.decode("gbk"))
                 self.keys.append([v1.decode("gbk"), ])
-                self.vals.append(
-                    [v2.decode("gbk"), v4.decode("gbk")])
+                self.vals.append([v2.decode("gbk"), v4.decode("gbk")])
         f.close()
-        print(self.keys, self.vals)
+        # DEBUG
+        self.log.info("Extracted total %d recodes." % len(self.keys))
+        # print(self.keys, self.vals)
 
 
 # SECTION: SELFTESTING
@@ -248,11 +255,23 @@ class TdxCodeFile(FileExtractor):
 #   Selftesing syntax: python <filename>
 #
 if __name__ == "__main__":
+    # 创建调试用 logging 机制, 仅输出日志到标准错误输出。
+    log = logging.getLogger("DEBUG")
+    log.setLevel(logging.DEBUG)  # 在此处设置生成日志的级别
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)  # 在此处设置输出日志的级别
+    fmt = logging.Formatter(
+        fmt='%(asctime)s %(levelname)8s %(name)s : %(message)s',
+        datefmt='%m-%d %H:%M:%S |')
+    ch.setFormatter(fmt)
+    log.addHandler(ch)
+
     # 构造变量, 或调用函数以对本模块进行自我测试
+    log.info("Start to retrive stock structure data from Web.")
     s600029 = SinaSSE(
         "600029",
         "http://vip.stock.finance.sina.com.cn/corp/go.php/vCI_StockStructure/stockid/600029.phtml")
     s600029.fetch()
 
-    # codesSH = TdxCodeFile("上海", "/Users/mammon/Programming/szm.tnf")
-    # codesSH.fetch()
+    codesSH = TdxCodeFile("上海", "/Users/mammon/Programming/szm.tnf")
+    codesSH.fetch()
