@@ -124,7 +124,7 @@ class WebExtractor(Extractor):
             f = urllib.request.urlopen(self.url)
             self.tree = html.parse(f, self.parser).getroot()
         except:
-            return
+            raise ("Error found while retrieving page.")
 
         # 使用私有方法 _purge 清洗抓到的数据, 以节约部分内存。
         self._purge()
@@ -148,14 +148,111 @@ class FileExtractor(Extractor):
         # 类属性定义部分
         self.path = path
 
+#
+# SECTION: CLASS DEFINATION
+#
+#   新浪股本数据抓取器, WebExtractor 的子类
+#
+#   通过重载方法 transfrom(), 实现对不同数据种类和不同数据来源的 html 数据抽取
+#   的转换。由于股票基本面数据大多以数据表格的方式提供, 因此抽取相关 html 的工
+#   作大体为, 首先定位包含数据的容器标签; 其次删除容器中不包含数据的表格; 最后
+#   将表格格式标准化。
+#
+#       属性:
+#           code(str)   数据所属的股票代码
+#       方法:
+#           transform() 重载方法, 实现抓取数据。
+#
+class SinaSSE(WebExtractor):
+    """Class for 'capital structure of a Share from Sina'"""
+
+    def __init__(self, code, url):
+        super().__init__(url)
+        self.code = code
+
+    def fetch(self):
+        """ Redinfe 'fetch()' method to add data transfrom. """
+        super().fetch()
+        self.transfrom()
+
+    def transfrom(self):
+        """ Transforms html data, return None. """
+
+        # 如果网页结构或数据来源发生修改, 主要修改这个字符串。
+        tables = self.tree.xpath("//table[@id]")
+        # 找到数据后, 由于新浪的网页中有一个无用的表头, 因此要删去
+        for table in tables:
+            theads = table.xpath(".//thead")
+            if len(theads) == 1:
+                theads[0].drop_tree()
+            else:  # 没有或超过 1 个 thead 都表示本数据表有问题, 因此跳过。
+                continue
+            self._trans2DHtmlTab(table)
+        if len(self.keys) > 0:
+            print("数据转换成功")
+        else:
+            print("数据转换失败")
+
+
+#
+#   TdxCodeFile
+#
+#       属性:
+#           path(str)   文件数据的 PATH
+#       方法:
+#           fetch()     重载方法, 实现抓取数据。
+#
+class TdxCodeFile(FileExtractor):
+    """ Superclass of all web data extractors """
+
+    def __init__(self, market, path):
+        super().__init__(path)
+        # 类属性定义部分
+        self.market = market
+        self.path = path
+        self.keys = []
+        self.vals = []
+
+    def fetch(self):
+        """"""
+        f = open(self.path, "rb")
+        # 处理文件头
+        head_size = 50  # 此处定义了文件头部的大小
+        conv_date = lambda x: datetime.date(x // 10000,
+                                            x // 100 % 100, x % 100)
+        buffer = f.read(head_size)
+        date = conv_date(unpack("<40shii", buffer)[2])
+        # DEBUG
+        print("Get date from head of data file =", date)
+
+        # 处理正文部分的数据记录
+        recd_size = 314  # 此处定义了记录的直接长度
+        conv_cstr = lambda s: s.strip(b"\x00")
+        while True:
+            buffer = f.read(recd_size)
+            if len(buffer) < recd_size:  # 如果读到的记录长度不对, 意味 EOF
+                break
+            else:
+                v1, v2, v3, v4 = [conv_cstr(s) for s in
+                                  unpack("<23s49s213s29s", buffer)]
+                # print(v1.decode("gbk"),v2.decode("gbk"),v4.decode("gbk"))
+                self.keys.append([v1.decode("gbk"), ])
+                self.vals.append(
+                    [v2.decode("gbk"), v4.decode("gbk")])
+        f.close()
+        print(self.keys, self.vals)
 
 
 # SECTION: SELFTESTING
 #
 #   Selftesing syntax: python <filename>
 #
-# if __name__ == "__main__":
+if __name__ == "__main__":
     # 构造变量, 或调用函数以对本模块进行自我测试
-    # s600029 = WebExtractor(
-    #     "http://vip.stock.finance.sina.com.cn/corp/go.php/vCI_StockStructure/stockid/600029.phtml")
-    # s600029.fetch()
+    s600029 = SinaSSE(
+        "600029",
+        "http://vip.stock.finance.sina.com.cn/corp/go.php/vCI_StockStructure/stockid/600029.phtml")
+    s600029.fetch()
+
+    # codesSH = TdxCodeFile("上海", "/Users/mammon/Programming/szm.tnf")
+    # codesSH.fetch()
