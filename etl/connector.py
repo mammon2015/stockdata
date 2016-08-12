@@ -1,40 +1,65 @@
 #!/usr/local/python/bin/python
 # -*- coding: utf-8 -*-
 #
-#   本文件包含 Extractor 系列中通用超类的定义, 包含:
-#       Extractor
-#           WebExtractor
-#           FileExtractor
+#   本文件包含 DBConn 系列中通用超类的定义, 包含:
+#       DBConn
+#           MySQLConn
 #
 """ Module contains the superclasses of 'Extractor'. """
 
 #
 # SECTION: MODULE IMPORTS
 #
+import logging
 import mysql.connector
 import mysql.connector.errorcode
 
 #
 # SECTION: DEFINE EXTERNAL INTERFACE
 #
-__all__ = ['', ]
+__all__ = ['DBConn']
 
 
 #
 # SECTION: CLASS DEFINATION
 #
-#   所有数据抓取器的基类.
+#   数据库连接类的基类
 #       属性:
+#           _state          数据路连接的状态
 #       方法:
+#           update          写数据到数据库的接口
+#           select          从数据库读数据的借口
 #
 class DBConn():
-    """"""
+    """ SuperClass of database connect classes. """
+
+    def __init__(self):
+        super().__init__()
+        # 添加类调试使用 Logger
+        self.log = logging.getLogger("DEBUG")
+
+    def update(self, sql_str, keys, vals):
+        pass
+
+    def select(self, sql_str):
+        pass
+
+
+#
+#   MySQL 数据库连接类
+#       属性:
+#           _state          数据路连接的状态
+#       方法:
+#           __init__        重载构造函数，主要实现数据链接的建立
+#           update          重载，具体实现数据写入逻辑
+#           select          重载，具体实现数据读取逻辑
+#
+class MysqlConn(DBConn):
+    """ DBConn's subclass used to connect MySQL databse. """
     username = None
     password = None
     hostname = None
     database = None
-
-    std_keys = {}
 
     def __init__(self, **kw):
         super().__init__()
@@ -43,8 +68,11 @@ class DBConn():
             if not hasattr(self, name):
                 raise TypeError("Unknown parameter: %s=%r" % (name, value))
             setattr(self, name, value)
+        # 判断是否所有的链接串变量都已经设置。
         if not all((self.username, self.password, self.hostname, self.database)):
             raise ValueError("Database connection string lack of parameters")
+        # 创建数据库链接字符串
+        self.log.info("Try to connect MySQL database.")
         try:
             self.conn = mysql.connector.connect(user=self.username,
                                                 password=self.password,
@@ -53,34 +81,34 @@ class DBConn():
             self._state = "数据库已连接"
         except mysql.connector.Error as err:
             if err.errno == mysql.connector.errorcode.ER_ACCESS_DENIED_ERROR:
-                print("Something is wrong with your user name or password")
+                self.log.error("Something is wrong with your user name or password")
             elif err.errno == mysql.connector.errorcode.ER_BAD_DB_ERROR:
-                print("Database does not exist")
+                self.log.error("Database does not exist")
             else:
                 print(err)
+            raise (err)
+        # DEBUG
+        self.log.info("Database connected.")
 
-    def _std_key(self, word):
-        """ Replace any non-standard word in key to standard one. """
-        # 首先检查是否存在本地字典, 如果没有, 从数据库抓一份。
-        if not self.std_keys:       # None 或者 {}
-            if not self._state in ("数据库已连接",):
-                raise ValueError("No valid database connection.")
-            cursor = self.conn.cursor()
-            cursor.execute("SELECT * FROM stockdata.typos;")
-            self.std_keys = {r[0]:r[1] for r in cursor}
-            # DEBUG
-            print(self.std_keys)
+    def update(self, sql_str, keys, vals):
+        super().update()
 
-        # 依次检查输入参数, 如果是非标准名则将其替换
-        if word in self.std_keys.keys():
-            return self.std_keys[word]
+    def select(self, sql_str):
+        """ Get and return result set of giving SQL."""
+        cursor = self.conn.cursor()
+        cursor.execute(sql_str)
+        return list(cursor)
+
+    def get_conn(self):
+        if self._state in ["数据库已连接", ]:
+            return self.conn
         else:
-            return word
+            return None
 
     def __del__(self):
-        if hasattr(self,"conn") and self.conn is not None:
+        if self._state in ["数据库已连接。", ]:
             self.conn.close()
-
+            self.log.info("数据库链接已关闭。")
 
 #
 # SECTION: SELFTESTING
@@ -88,13 +116,3 @@ class DBConn():
 #   Selftesing syntax: python <filename>
 #
 # if __name__ == "__main__":
-
-db_conn_str = {
-    'username': 'mammon',
-    'password': 'leon',
-    'hostname': '192.168.1.11',
-    'database': 'stockdata'
-}
-
-db_mysql = DBConn(**db_conn_str)
-print(db_mysql._std_key("·变动原因"))

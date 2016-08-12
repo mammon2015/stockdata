@@ -4,40 +4,45 @@
 #   本文件包含 Extractor 系列中通用超类的定义, 包含:
 #       Extractor
 #           WebExtractor
+#               SinaSSE
 #           FileExtractor
+#               TdxCodeFile
 #
-""" Module contains the superclasses of 'Extractor'. """
+""" Module contains the classes of used to extrac data from source.  """
 
 #
 # SECTION: MODULE IMPORTS
 #
 import logging
-import urllib.request
-import datetime
+
+from config import *
+from struct import unpack
+from urllib import request
+from datetime import date
 
 from lxml import html
 from lxml.html.clean import Cleaner
-from struct import unpack
 
-
+from etl.connector import MysqlConn
+from etl.nomalizer import Normalizer
 #
 # SECTION: DEFINE EXTERNAL INTERFACE
 #
-__all__ = ['Extractor', 'WebExtractor']
+__all__ = ['SinaSSE', 'TdxCodeFile']
+
+#
+# SECTION: DEFINE GLOBAL VARIABLES
+#
+nwords = Normalizer(**confs.DB_STR)         # 用来纠正非规范词的对象
 
 
 #
 # SECTION: CLASS DEFINATION
 #
-#
 #   所有数据抓取器的基类.
 #       属性:
-#           state(str)  用于记录抓取器的状态, 例如 "抓取成功", "转换结束"。
-#           keys(list)  数据的 key 列表, key 可以是一个列表
-#           vals(list)  数据的字段列表, 同样可以存放列表
+#           state(str)  用于记录状态, 例如 "抓取成功", "转换结束"。
 #       方法:
-#           fetch()     用于抓取数据
-#           upload()    用于上传数据到数据库
 #
 class Extractor:
     """ Root class of all data extractors """
@@ -46,18 +51,9 @@ class Extractor:
         super().__init__()
         # 类属性定义部分
         self._state = "已初始化"
-        self.keys = []
-        self.vals = []
         # 添加类调试使用 Logger
         self.log = logging.getLogger("DEBUG")
-
-    def fetch(self):
-        """ Fetches data from source, returns None. """
-        pass
-
-    def upload(self):
-        """ Uploads data to right place, returns None. """
-        pass
+        self.log.info("'Extractor' instance is initialized.")
 
 
 #
@@ -80,66 +76,54 @@ class WebExtractor(Extractor):
         super().__init__()
         # 类属性定义部分
         self.url = url
-        self.parser = html.HTMLParser(encoding="gbk",
-                                      remove_blank_text=True,
-                                      remove_comments=True)
-        self.tree = None
+        self.data = []
 
     def _purge(self):
         """ Purges some garbage from fetched data, returns bool. """
 
-        cleaner = html.clean.Cleaner(style=True,
-                                     page_structure=False,
-                                     kill_tags=('a',))
-        self.tree = cleaner.clean_html(self.tree)
-        # DEBUG
-        self.log.info("HTML tree purged.")
-        # print(html.tostring(self.tree,pretty_print=True,encoding=str))
+    def _add2DHtmlTab(self, table):
+        """ Add data in a 2D table to 'tree', returns list of data. """
 
-    def _trans2DHtmlTab(self, table):
-        """ Transforms 2D table in 'tree'; returns None. """
-
-        #   本方法用来将标准的二维数据表装换成 key:value 对。
-        #   标准的二维数据表, 是指第一行为列标题, 第一列为行标题, 其余为数据
-        #   单元。每行数据单元数量应与列标题数相等。
+        # 本方法用来将标准的二维数据表装换成列表 [行标题, 列标题, 单元数据]。
+        # 二维数据表格式必须标准, 即第一行为列标题, 第一列为行标题，每行数据单
+        # 元数量与列标题数相等。
         #
         rows = table.xpath(".//tr")
-        if len(rows) <= 1:  # 小于等于 1 行的显然不是合法表格
-            return
         # 先抽取列标题, 否则无法构成后面的数据
-        get_text = lambda cell: "" if cell.text is None else cell.text.strip()
-        colheads = [get_text(cell) for cell in rows[0].xpath(".//td")]
-        # 顺序处理其他行包含的数据
+        get_text = lambda tag: "" if tag.text is None else tag.text.strip()
+        colheads = [get_text(td) for td in rows[0].xpath(".//td")]
+        # 处理包含的数据
+        data = []
         for row in rows[1:]:
             cells = [get_text(cell) for cell in row.xpath(".//td")]
-            if len(cells) != len(colheads):
-                continue
             for i in range(1, len(cells)):
-                self.keys.append([cells[0], colheads[i]])
-                self.vals.append([cells[i], ])
-
+                self.data.append([cells[0], colheads[i], cells[i]])
         # DEBUG
         self.log.info("One table found, %d rows found." % len(rows))
-
-        # for i in range(0, len(self.keys)):
-        #     print(self.keys[i], self.vals[i])
 
     def fetch(self):
         """ Fetches html from web, returns None. """
 
         # 抓取 html 网页
-        self.log.info("Start to fetch HTML page from web.")
-        try:
-            f = urllib.request.urlopen(self.url)
-            self.tree = html.parse(f, self.parser).getroot()
-        except:
-            raise ("Error found while retrieving page.")
+        self.log.info("Start to fetch page : %s" % self.url)
+        parser = html.HTMLParser(encoding="gbk",
+                                 remove_blank_text=True,
+                                 remove_comments=True)
+        # try:
+        f = request.urlopen(self.url)
+        self.tree = html.parse(f, parser).getroot()
         self.log.info("HTML page fetched.")
 
-        # 使用私有方法 _purge 清洗抓到的数据, 以节约部分内存。
-        self._purge()
+        # 数据的初步清洗, 以节约部分内存。
+        html_cleaner = Cleaner(style=True,
+                               page_structure=False,
+                               kill_tags=('a',))
+        self.tree = html_cleaner.clean_html(self.tree)
         # 完成裸数据清洗后, 将实例状态改为 "抓取成功"
         self._state = "抓取成功"
+        # DEBUG
+        self.log.info("HTML tree purged.")
+        # print(html.tostring(self.tree,encoding=str))
 
 
 #
@@ -180,25 +164,34 @@ class SinaSSE(WebExtractor):
     def __init__(self, code, url):
         super().__init__(url)
         self.code = code
-        self.log.info("SinaSSE object initialized.")
 
     def fetch(self):
-        """ Redinfe 'fetch()' method to add data transfrom. """
+        """ Re-define 'fetch()' method to add data transfrom. """
+
+        # 调用其父类的 fetch 完成网页抓取和基本数据清洗
         super().fetch()
-        self.transfrom()
 
-    def transfrom(self):
-        """ Transforms html data, return None. """
-
-        # 如果网页结构或数据来源发生修改, 主要修改这个字符串。
+        # 数组转换，将 fetch 得到的 html 树转换为记录的列表。
+        #   新浪 "股本结构" 网页的数据包含在多个带 id 的表格中。
         tables = self.tree.xpath("//table[@id]")
-        # 找到数据后, 由于新浪的网页中有一个无用的表头, 因此要删去
         for table in tables:
+            # 每个数据都有一个无用的表头，直接删除。
             table.xpath(".//thead")[0].drop_tree()
-            self._trans2DHtmlTab(table)
-        self._state = ("转换成功" if len(self.keys) > 0 else "转换失败")
+            self._add2DHtmlTab(table)
+        self._state = ("转换成功" if len(self.data) > 0 else "转换失败")
         # DEBUG
-        self.log.info("Total %d datas found in page." % len(self.keys))
+        self.log.info("Total %d data records found in page." % len(self.data))
+        # for i in self.data: print(i)
+
+    def clean(self):
+        """ Clean data with advanced logic. """
+        for i in range(len(self.data)-1,-1,-1):
+            rec = self.data[i]
+            rec[0] = nwords.get_fix(rec[0])
+            if rec[0] == "":
+                self.data.pop(i)
+        for rec in self.data:
+            print(rec)
 
 
 #
@@ -212,20 +205,20 @@ class SinaSSE(WebExtractor):
 class TdxCodeFile(FileExtractor):
     """ Superclass of all web data extractors """
 
-    def __init__(self, market, path):
+    def __init__(self, market, path, **kw):
         super().__init__(path)
         # 类属性定义部分
         self.market = market
-        self.path = path
-        self.keys = []
-        self.vals = []
+        self.data = []
+        self.mysql = MysqlConn(**kw)
+        self.log.info("Code file extractor initialized for %s." % market)
 
     def fetch(self):
         """"""
         f = open(self.path, "rb")
         # 处理文件头
         head_size = 50  # 此处定义了文件头部的大小
-        conv_date = lambda x: datetime.date(x // 10000, x // 100 % 100, x % 100)
+        conv_date = lambda x: date(x // 10000, x // 100 % 100, x % 100)
         buffer = f.read(head_size)
         date = conv_date(unpack("<40shii", buffer)[2])
         # DEBUG
@@ -242,36 +235,30 @@ class TdxCodeFile(FileExtractor):
                 v1, v2, v3, v4 = [conv_cstr(s) for s in
                                   unpack("<23s49s213s29s", buffer)]
                 # print(v1.decode("gbk"),v2.decode("gbk"),v4.decode("gbk"))
-                self.keys.append([v1.decode("gbk"), ])
-                self.vals.append([v2.decode("gbk"), v4.decode("gbk")])
+                self.data.append(
+                    [v1.decode("gbk"), self.market, v2.decode("gbk"),
+                     v4.decode("gbk")])
         f.close()
         # DEBUG
-        self.log.info("Extracted total %d recodes." % len(self.keys))
-        # print(self.keys, self.vals)
+        self.log.info(
+            "Data fetched from file, total %d records." % len(self.data))
+        # for i in range(0,len(self.keys)):
+        #     print(self.keys[i], self.vals[i])
 
+    def upload(self):
+        """ Update data to database. """
+        # 将数据表读入内存
+        self.log.info("Start to update database.")
+        records = self.mysql.select(
+            "SELECT code, market, name, abbreviation, timestamp FROM codes;")
 
-# SECTION: SELFTESTING
+        # DEBUG
+        for r in records:
+            print(r)  # SECTION: SELFTESTING
+
+class Normalizer():
+    """ A class which method used to nomalizer """
 #
 #   Selftesing syntax: python <filename>
 #
-if __name__ == "__main__":
-    # 创建调试用 logging 机制, 仅输出日志到标准错误输出。
-    log = logging.getLogger("DEBUG")
-    log.setLevel(logging.DEBUG)  # 在此处设置生成日志的级别
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)  # 在此处设置输出日志的级别
-    fmt = logging.Formatter(
-        fmt='%(asctime)s %(levelname)8s %(name)s : %(message)s',
-        datefmt='%m-%d %H:%M:%S |')
-    ch.setFormatter(fmt)
-    log.addHandler(ch)
-
-    # 构造变量, 或调用函数以对本模块进行自我测试
-    log.info("Start to retrive stock structure data from Web.")
-    s600029 = SinaSSE(
-        "600029",
-        "http://vip.stock.finance.sina.com.cn/corp/go.php/vCI_StockStructure/stockid/600029.phtml")
-    s600029.fetch()
-
-    codesSH = TdxCodeFile("上海", "/Users/mammon/Programming/szm.tnf")
-    codesSH.fetch()
+# if __name__ == "__main__":
