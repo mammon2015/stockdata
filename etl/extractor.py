@@ -32,7 +32,7 @@ __all__ = ['SinaSSE', 'TdxCodeFile']
 #
 # SECTION: DEFINE GLOBAL VARIABLES
 #
-nwords = Normalizer(**confs.DB_STR)  # 用来纠正非规范词的对象
+word_pair = Normalizer(**confs.DB_STR)  # 用来纠正非规范词的对象
 
 
 #
@@ -186,7 +186,7 @@ class SinaSSE(WebExtractor):
         """ Clean data with advanced logic. """
         del_list = []
         for i, rec in enumerate(self.data):
-            rec[0] = nwords.get_fix(rec[0])
+            rec[0] = word_pair.get_fix(rec[0])
             # 如果第一个字段规范化结果是空的话，删除整个记录。
             if rec[0] == "":
                 del_list.append(i)
