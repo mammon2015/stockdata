@@ -41,8 +41,6 @@ class Normalizer():
         cursor = mysql.cursor()
         cursor.execute("SELECT nonstd_word, std_word FROM nonstd_words;")
         self.pairs = {r[0]: r[1] for r in cursor}
-        # DEBUG
-        print(self.pairs)
 
     def get_fix(self, word):
         """ Try to fix the word. """

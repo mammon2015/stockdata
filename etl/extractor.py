@@ -14,17 +14,16 @@
 # SECTION: MODULE IMPORTS
 #
 import logging
-
-from config import *
 from struct import unpack
 from urllib import request
-from datetime import date
 
 from lxml import html
 from lxml.html.clean import Cleaner
 
+from config import *
 from etl.connector import MysqlConn
 from etl.nomalizer import Normalizer
+
 #
 # SECTION: DEFINE EXTERNAL INTERFACE
 #
@@ -33,7 +32,7 @@ __all__ = ['SinaSSE', 'TdxCodeFile']
 #
 # SECTION: DEFINE GLOBAL VARIABLES
 #
-nwords = Normalizer(**confs.DB_STR)         # 用来纠正非规范词的对象
+nwords = Normalizer(**confs.DB_STR)  # 用来纠正非规范词的对象
 
 
 #
@@ -185,13 +184,22 @@ class SinaSSE(WebExtractor):
 
     def clean(self):
         """ Clean data with advanced logic. """
-        for i in range(len(self.data)-1,-1,-1):
-            rec = self.data[i]
+        del_list = []
+        for i, rec in enumerate(self.data):
             rec[0] = nwords.get_fix(rec[0])
+            # 如果第一个字段规范化结果是空的话，删除整个记录。
             if rec[0] == "":
-                self.data.pop(i)
-        for rec in self.data:
-            print(rec)
+                del_list.append(i)
+                continue
+            # 第三个字段主要解决数字中的 "万股" 的问题
+            if rec[2].find("万股") != -1:
+                s = rec[2].split("万股")[0]
+                f = float(s) * 10000 + 0.005
+                rec[2] = int(f)
+        del_list.sort(reverse=True)
+        for i in del_list:
+            self.data.pop(i)
+        for rec in self.data: print(rec)
 
 
 #
@@ -256,8 +264,10 @@ class TdxCodeFile(FileExtractor):
         for r in records:
             print(r)  # SECTION: SELFTESTING
 
+
 class Normalizer():
     """ A class which method used to nomalizer """
+
 #
 #   Selftesing syntax: python <filename>
 #
