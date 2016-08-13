@@ -3,7 +3,7 @@
 #
 #   用来从配置文件中读取配置键值对。
 #
-""" Read configuration key-value pairs from config file """
+""" Read configuration key-value word_pairs from config file """
 
 # MySQL database connection string for test.
 DB_STR = {

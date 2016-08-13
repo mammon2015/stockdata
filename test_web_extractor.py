@@ -26,3 +26,4 @@ if __name__ == "__main__":
     sh600036 = SinaSSE(code, url)
     sh600036.fetch()
     sh600036.clean()
+    sh600036.upload()

@@ -19,10 +19,10 @@ from urllib import request
 
 from lxml import html
 from lxml.html.clean import Cleaner
+from mysql import connector
 
 from config import *
-from etl.connector import MysqlConn
-from etl.nomalizer import Normalizer
+from etl.stdzn import WordNormalizer
 
 #
 # SECTION: DEFINE EXTERNAL INTERFACE
@@ -32,7 +32,7 @@ __all__ = ['SinaSSE', 'TdxCodeFile']
 #
 # SECTION: DEFINE GLOBAL VARIABLES
 #
-word_pair = Normalizer(**confs.DB_STR)  # 用来纠正非规范词的对象
+wn = WordNormalizer(**confs.DB_STR)  # 用来纠正非规范词的对象
 
 
 #
@@ -97,8 +97,8 @@ class WebExtractor(Extractor):
             cells = [get_text(cell) for cell in row.xpath(".//td")]
             for i in range(1, len(cells)):
                 self.data.append([cells[0], colheads[i], cells[i]])
-        # DEBUG
-        self.log.info("One table found, %d rows found." % len(rows))
+                # DEBUG
+                # self.log.info("One table found, %d rows found." % len(rows))
 
     def fetch(self):
         """ Fetches html from web, returns None. """
@@ -184,22 +184,55 @@ class SinaSSE(WebExtractor):
 
     def clean(self):
         """ Clean data with advanced logic. """
-        del_list = []
-        for i, rec in enumerate(self.data):
-            rec[0] = word_pair.get_fix(rec[0])
-            # 如果第一个字段规范化结果是空的话，删除整个记录。
-            if rec[0] == "":
-                del_list.append(i)
-                continue
-            # 第三个字段主要解决数字中的 "万股" 的问题
-            if rec[2].find("万股") != -1:
-                s = rec[2].split("万股")[0]
-                f = float(s) * 10000 + 0.005
-                rec[2] = int(f)
-        del_list.sort(reverse=True)
-        for i in del_list:
-            self.data.pop(i)
-        for rec in self.data: print(rec)
+        new_data = []  # 记录需要被删除的记录序号
+        while len(self.data) > 0:
+            # 拆出每条记录的各个字段进行处理
+            item, date, value = self.data.pop()
+            item = wn.fix_word(item)  # 标准化关键字字段
+            if item == "": continue  # 关键字为空则跳过后面保存数据部分
+            value = wn.rm_quant(value)  # 删除类似 "万股" 这样的量词
+            # 保存处理过的数据到一个新的列表
+            new_data.append([item, date, value])
+        # 保存新数据列表到类属性
+        self.data = new_data
+        # DEBUG
+        self.log.info(
+            "Remove some useless data, new length is %d." % len(self.data))
+        # for rec in self.data: print(rec)
+
+    def upload(self):
+        """ Write capital structure to database. """
+        # 初始化数据库链接
+        mysql = connector.connect(**confs.DB_STR)
+        self.log.info("MySQL connection initialized.")
+        # 从数据库读取当前记录的 key 部分，用来判断是否已存在记录。
+        cursor = mysql.cursor()
+        cursor.execute("SELECT DISTINCT CONCAT(code, item, date) "
+                       "FROM stockdata.captial_structure "
+                       "WHERE code=%s", (self.code,))
+        existed = {r[0] for r in cursor}
+        # 使用集合 existed 将 self.data 拆为 updates 和 inserts 两个列表。
+        updates = []
+        inserts = []
+        remains = []
+        while len(self.data) > 0:
+            rec =self.data.pop()
+            key = self.code + rec[0] + rec[1]
+            if isinstance(rec[2],int):
+                if key in existed:
+                    updates.append([self.code] + rec)
+                else:
+                    inserts.append([self.code] + rec)
+            else:
+                remains.append(rec)
+
+        # 根据 inserts 列表中的索引，插入数据到数据库
+        self.log.info("Start insert data to database, total %d" % len(inserts))
+        sql_str = ("INSERT INTO stockdata.captial_structure "
+                   "(code, item, date, value) "
+                   "VALUES (%s, %s, %s, %s)")
+        cursor.executemany(sql_str, inserts)
+        mysql.commit()
 
 
 #
@@ -218,7 +251,6 @@ class TdxCodeFile(FileExtractor):
         # 类属性定义部分
         self.market = market
         self.data = []
-        self.mysql = MysqlConn(**kw)
         self.log.info("Code file extractor initialized for %s." % market)
 
     def fetch(self):
