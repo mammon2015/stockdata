@@ -68,7 +68,7 @@ def _assorted_max(lst2d, val_idx):
 class ExtDataPiece:
     """ Base class for Extended Data of a share. """
 
-    def __init__(self, code):
+    def __init__(self, ):
         super().__init__()
         # 类属性定义部分
         # 添加类调试使用 Logger
@@ -92,20 +92,18 @@ class ExtDataPiece:
 #           dump_all        输出全部数据，调试用
 #           dump_now        输出最新数据，调试用
 #
-class NumExtDataPiece(ExtDataPiece):
+class NumExtData(ExtDataPiece):
     """ Extend ExtDataPiece to store numberic data. """
-
+    #
+    # 用来提供数据库表 num_extend_data
     def __init__(self, code):
-        super().__init__(code)
+        super().__init__()
         # 类属性定义部分
         self.code = code
-        self.type = ""
-        self.table = ""
+        self.type = self.table = ""
         self.data = []
-        self.index = {}
-        self.recent = {}
-        self.insert_idx = []
-        self.update_idx = []
+        self.index = self.recent = {}
+        self.insert_idx = self.update_idx = []
 
     def _read_from_db(self):
         """ Read data from data base.
@@ -144,7 +142,7 @@ class NumExtDataPiece(ExtDataPiece):
             old = self.data[pt]
             if old[2] != data[2]:
                 self.data[pt][2] = data[2]
-                self.update_idx.append(pt)   # 记录该条数据需要更新到数据库
+                self.update_idx.append(pt)  # 记录该条数据需要更新到数据库
                 self.log.info("%s %s %d changed to %d" %
                               (old[0], old[1], old[2], data[2]))
         # 不存在则加入
@@ -155,7 +153,7 @@ class NumExtDataPiece(ExtDataPiece):
             # 在索引中加入新 key
             self.index[key] = pt
             # 加入的值可能影响最新值索引，因此将其置空。
-            self.recent={}
+            self.recent = {}
         return True
 
     def update_database(self):
@@ -165,14 +163,20 @@ class NumExtDataPiece(ExtDataPiece):
         db_conn = mysql.connector.connect(**DB_STR)
         cursor = db_conn.cursor()
         # 准备写入数据库的数据列表
-        insert_list = [[self.code, self.type] + self.data[n]
-                       for n in self.insert_idx]
-        cursor.executemany("INSERT INTO num_extend_data "
-                           "(code, type, item, date, value) "
-                           "VALUES (%s, %s, %s, %s, %s)", insert_list)
-        db_conn.commit()
-        self.insert_idx=[]
+        if len(self.insert_idx) > 0:
+            insert_list = [[self.code, self.type] + self.data[n]
+                           for n in self.insert_idx]
+            cursor.executemany("INSERT INTO num_extend_data "
+                               "(code, type, item, date, value) "
+                               "VALUES (%s, %s, %s, %s, %s)", insert_list)
+            db_conn.commit()
+        self.log.info("Total %d records write to database." %
+                      len(self.insert_idx))
+        self.insert_idx = []
         # 其次根据 self.update_idx 更新数据库中的记录
+        if len(self.update_idx) > 0:
+            self.log.error("Update to database not yet be implemented.")
+            raise ("Need you work more hard.")
 
     def _chk_recent(self):
         """ Check if self.recent existend and have valid value. """
@@ -189,7 +193,7 @@ class NumExtDataPiece(ExtDataPiece):
     def dump_all(self):
         """ Print all data. """
         for r in self.data: print(r)
-        print ("Total record number is %d" % len(self.data))
+        print("Total record number is %d" % len(self.data))
 
     def dump_now(self):
         """ Print now data """
@@ -205,7 +209,7 @@ class NumExtDataPiece(ExtDataPiece):
 #       属性:
 #       方法:
 #
-class CaptitalStructureData(NumExtDataPiece):
+class CaptitalStructureData(NumExtData):
     """ Class used to store Capital Structure data. """
 
     def __init__(self, code):
@@ -215,3 +219,10 @@ class CaptitalStructureData(NumExtDataPiece):
         self.table = "num_extend_data"
         # 调用类方法从数据库读取数据
         self._read_from_db()
+
+    def add_many(self, data_list):
+        """ Add many capital structure data to object. """
+        #
+        # 在列表中找出符合要求的数据：1，关键字在关键字表中；2，值为合法的
+        # Decimal 数值。将这些数据加入数据对象中。
+        #

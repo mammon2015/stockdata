@@ -79,7 +79,7 @@ class WebExtractor(Extractor):
         self.data = []
         self.tree = None
 
-    def _add2DHtmlTab(self, table):
+    def _add_from_2d_table(self, table):
         """ Add data in a 2D table to 'tree', returns none. """
 
         # 本方法用来将标准的二维数据表装换成列表 [行标题, 列标题, 单元数据]。
@@ -177,7 +177,7 @@ class SinaSSE(WebExtractor):
         for table in tables:
             # 每个数据都有一个无用的表头，直接删除。
             table.xpath(".//thead")[0].drop_tree()
-            self._add2DHtmlTab(table)
+            self._add_from_2d_table(table)
         self._state = ("转换成功" if len(self.data) > 0 else "转换失败")
         # DEBUG
         self.log.info("Total %d data records found in page." % len(self.data))
